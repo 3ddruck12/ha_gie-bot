@@ -166,6 +166,19 @@ action:
       final_duration: >
         {{ (base * temp_adjust * season_adjust) | round(0) }}
 
+      start_message: >
+        {{ 'Gießen gestartet (Fallback): ' ~ (final_duration | int | string) ~ ' Min. Sensor unbekannt.'
+           if not moisture_valid
+           else 'Gießen gestartet: ' ~ (final_duration | int | string) ~ ' Min. Feuchte: ' ~ (moisture_value | string) ~ '%, Temp: ' ~ (temp | string) ~ '°C.' }}
+
+      end_message: >
+        {{ 'Gießen beendet nach ' ~ (final_duration | int | string) ~ ' Min. Feuchte jetzt: ' ~ states(moisture_entity) ~ '%.' }}
+
+      skip_message: >
+        {{ 'Kein Gießen: Sensor unbekannt (Fallback deaktiviert).'
+           if (not moisture_valid and not fallback)
+           else 'Kein Gießen nötig. Feuchte: ' ~ (moisture_value | string) ~ '% (Schwelle: ' ~ (threshold | string) ~ '%).' }}
+
   - if:
       - condition: template
         value_template: "{{ needs_watering }}"
@@ -179,12 +192,7 @@ action:
               entity_id: !input notify_service
             data:
               title: "GießBot – {{ zone }}"
-              message: >-
-                {% if not moisture_valid -%}
-                Gießen gestartet (Fallback): {{ final_duration | int }} Min. Sensor unbekannt.
-                {%- else -%}
-                Gießen gestartet: {{ final_duration | int }} Min. Feuchte: {{ moisture_value }}%, Temp: {{ temp }}°C.
-                {%- endif %}
+              message: "{{ start_message | trim }}"
 
       - service: switch.turn_on
         target: !input watering_targets
@@ -204,9 +212,7 @@ action:
               entity_id: !input notify_service
             data:
               title: "GießBot – {{ zone }}"
-              message: >-
-                Gießen beendet nach {{ final_duration | int }} Min.
-                Feuchte jetzt: {{ states(moisture_entity) }}%.
+              message: "{{ end_message | trim }}"
 
     else:
       - if:
@@ -218,11 +224,6 @@ action:
               entity_id: !input notify_service
             data:
               title: "GießBot – {{ zone }}"
-              message: >-
-                {% if not moisture_valid and not fallback -%}
-                Kein Gießen: Sensor unbekannt (Fallback deaktiviert).
-                {%- else -%}
-                Kein Gießen nötig. Feuchte: {{ moisture_value }}% (Schwelle: {{ threshold }}%).
-                {%- endif %}
+              message: "{{ skip_message | trim }}"
 
 mode: parallel
