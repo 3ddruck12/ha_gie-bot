@@ -166,63 +166,63 @@ action:
       final_duration: >
         {{ (base * temp_adjust * season_adjust) | round(0) }}
 
-  - choose:
-      - conditions:
+  - if:
+      - condition: template
+        value_template: "{{ needs_watering }}"
+    then:
+      - if:
           - condition: template
-            value_template: "{{ needs_watering }}"
-        sequence:
-          - if:
-              - condition: template
-                value_template: "{{ notify_enabled }}"
-            then:
-              - service: notify.notify
-                target:
-                  entity_id: !input notify_service
-                data:
-                  title: "GießBot – {{ zone }}"
-                  message: >
-                    Gießen gestartet: {{ final_duration | int }} Min.
-                    Feuchte: {{ moisture_value }}%, Temp: {{ temp }}°C{% if not moisture_valid %}
+            value_template: "{{ notify_enabled }}"
+        then:
+          - service: notify.notify
+            target:
+              entity_id: !input notify_service
+            data:
+              title: "GießBot – {{ zone }}"
+              message: >-
+                {% if not moisture_valid -%}
+                Gießen gestartet (Fallback): {{ final_duration | int }} Min. Sensor unbekannt.
+                {%- else -%}
+                Gießen gestartet: {{ final_duration | int }} Min. Feuchte: {{ moisture_value }}%, Temp: {{ temp }}°C.
+                {%- endif %}
 
-                    Sensor-Fallback aktiv (Sensor unbekannt){% endif %}
+      - service: switch.turn_on
+        target: !input watering_targets
 
-          - service: switch.turn_on
-            target: !input watering_targets
+      - delay:
+          minutes: "{{ final_duration | int }}"
 
-          - delay:
-              minutes: "{{ final_duration | int }}"
+      - service: switch.turn_off
+        target: !input watering_targets
 
-          - service: switch.turn_off
-            target: !input watering_targets
+      - if:
+          - condition: template
+            value_template: "{{ notify_enabled }}"
+        then:
+          - service: notify.notify
+            target:
+              entity_id: !input notify_service
+            data:
+              title: "GießBot – {{ zone }}"
+              message: >-
+                Gießen beendet nach {{ final_duration | int }} Min.
+                Feuchte jetzt: {{ states(moisture_entity) }}%.
 
-          - if:
-              - condition: template
-                value_template: "{{ notify_enabled }}"
-            then:
-              - service: notify.notify
-                target:
-                  entity_id: !input notify_service
-                data:
-                  title: "GießBot – {{ zone }}"
-                  message: >
-                    Gießen beendet nach {{ final_duration | int }} Min.
-                    Feuchte jetzt: {{ states(moisture_entity) }}%
-
-      default:
-        - if:
-            - condition: template
-              value_template: "{{ notify_enabled }}"
-          then:
-            - service: notify.notify
-              target:
-                entity_id: !input notify_service
-              data:
-                title: "GießBot – {{ zone }}"
-                message: >
-                  {% if not moisture_valid and not fallback -%}
-                  Kein Gießen: Sensor unbekannt (Fallback deaktiviert).
-                  {%- else -%}
-                  Kein Gießen nötig. Feuchte: {{ moisture_value }}% (Schwelle: {{ threshold }}%)
-                  {%- endif %}
+    else:
+      - if:
+          - condition: template
+            value_template: "{{ notify_enabled }}"
+        then:
+          - service: notify.notify
+            target:
+              entity_id: !input notify_service
+            data:
+              title: "GießBot – {{ zone }}"
+              message: >-
+                {% if not moisture_valid and not fallback -%}
+                Kein Gießen: Sensor unbekannt (Fallback deaktiviert).
+                {%- else -%}
+                Kein Gießen nötig. Feuchte: {{ moisture_value }}% (Schwelle: {{ threshold }}%).
+                {%- endif %}
 
 mode: parallel
