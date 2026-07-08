@@ -2,7 +2,8 @@ blueprint:
   name: GießBot 3000 – Greenhouse Smart Edition
   description: >
     Erweiterte Gewächshaus-Bewässerung für Tomaten & Gurken.
-    Mit 2 täglichen Läufen, Sensor-Fallback, Temperatur- und Saisonanpassung.
+    Mit 2 täglichen Läufen, Sensor-Fallback, Temperatur- und Saisonanpassung
+    sowie optionalen Push-Benachrichtigungen.
   domain: automation
 
   input:
@@ -100,6 +101,19 @@ blueprint:
       selector:
         boolean: {}
 
+    notify_enabled:
+      name: Benachrichtigungen aktivieren
+      default: true
+      selector:
+        boolean: {}
+
+    notify_service:
+      name: Benachrichtigungsdienst
+      description: z. B. notify.mobile_app_mein_handy
+      selector:
+        entity:
+          domain: notify
+
 trigger:
   - platform: time
     at: !input morning_time
@@ -116,6 +130,7 @@ action:
       zone: !input zone_name
       moisture_entity: !input soil_moisture_sensor
       temp_entity: !input temperature_sensor
+      notify_enabled: !input notify_enabled
 
       moisture: "{{ states(moisture_entity) }}"
       moisture_value: "{{ states(moisture_entity) | float(999) }}"
@@ -156,6 +171,21 @@ action:
           - condition: template
             value_template: "{{ needs_watering }}"
         sequence:
+          - if:
+              - condition: template
+                value_template: "{{ notify_enabled }}"
+            then:
+              - service: notify.notify
+                target:
+                  entity_id: !input notify_service
+                data:
+                  title: "GießBot – {{ zone }}"
+                  message: >
+                    Gießen gestartet: {{ final_duration | int }} Min.
+                    Feuchte: {{ moisture_value }}%, Temp: {{ temp }}°C{% if not moisture_valid %}
+
+                    Sensor-Fallback aktiv (Sensor unbekannt){% endif %}
+
           - service: switch.turn_on
             target: !input watering_targets
 
@@ -164,5 +194,35 @@ action:
 
           - service: switch.turn_off
             target: !input watering_targets
+
+          - if:
+              - condition: template
+                value_template: "{{ notify_enabled }}"
+            then:
+              - service: notify.notify
+                target:
+                  entity_id: !input notify_service
+                data:
+                  title: "GießBot – {{ zone }}"
+                  message: >
+                    Gießen beendet nach {{ final_duration | int }} Min.
+                    Feuchte jetzt: {{ states(moisture_entity) }}%
+
+      default:
+        - if:
+            - condition: template
+              value_template: "{{ notify_enabled }}"
+          then:
+            - service: notify.notify
+              target:
+                entity_id: !input notify_service
+              data:
+                title: "GießBot – {{ zone }}"
+                message: >
+                  {% if not moisture_valid and not fallback -%}
+                  Kein Gießen: Sensor unbekannt (Fallback deaktiviert).
+                  {%- else -%}
+                  Kein Gießen nötig. Feuchte: {{ moisture_value }}% (Schwelle: {{ threshold }}%)
+                  {%- endif %}
 
 mode: parallel
