@@ -19,30 +19,36 @@ blueprint:
       name: Aktivierungsschalter
       selector:
         entity:
-          domain: input_boolean
+          filter:
+            - domain: input_boolean
+          multiple: false
 
     watering_targets:
       name: Ventile / Pumpen
       selector:
         target:
           entity:
-            domain: switch
+            - domain:
+                - switch
 
     soil_moisture_sensor:
       name: Bodenfeuchtesensor
-      description: >
-        Sensor mit Bodenfeuchte in Prozent (%). Auch Sensoren ohne device_class
-        „moisture“ werden angezeigt (z. B. Zigbee, ESP, Custom-Sensoren).
+      description: Der Sensor, der die aktuelle Bodenfeuchtigkeit für diese Zone misst (in %).
       selector:
         entity:
-          domain: sensor
+          filter:
+            - domain: sensor
+            - domain: number
+          multiple: false
 
     temperature_sensor:
       name: Temperatursensor
-      description: Temperatur-Sensor in °C (optional für Hitze-Anpassung).
+      description: Temperatursensor in °C (optional für Hitze-Anpassung).
       selector:
         entity:
-          domain: sensor
+          filter:
+            - domain: sensor
+          multiple: false
 
     morning_time:
       name: Morgens (Tomaten)
@@ -148,7 +154,9 @@ blueprint:
       description: z. B. notify.mobile_app_mein_handy
       selector:
         entity:
-          domain: notify
+          filter:
+            - domain: notify
+          multiple: false
 
 trigger:
   - platform: time
