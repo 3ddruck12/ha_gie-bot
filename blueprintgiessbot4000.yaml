@@ -30,17 +30,19 @@ blueprint:
 
     soil_moisture_sensor:
       name: Bodenfeuchtesensor
+      description: >
+        Sensor mit Bodenfeuchte in Prozent (%). Auch Sensoren ohne device_class
+        „moisture“ werden angezeigt (z. B. Zigbee, ESP, Custom-Sensoren).
       selector:
         entity:
           domain: sensor
-          device_class: moisture
 
     temperature_sensor:
       name: Temperatursensor
+      description: Temperatur-Sensor in °C (optional für Hitze-Anpassung).
       selector:
         entity:
           domain: sensor
-          device_class: temperature
 
     morning_time:
       name: Morgens (Tomaten)
