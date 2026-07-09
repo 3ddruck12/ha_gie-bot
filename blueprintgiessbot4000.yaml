@@ -1,35 +1,25 @@
 blueprint:
-  name: GießBot 3000 – Greenhouse Smart Edition
+  name: GießBot 4000 – Tomaten Gewächshaus
   description: >
-    Erweiterte Gewächshaus-Bewässerung für Tomaten & Gurken.
-    Mit 2 täglichen Läufen, Sensor-Fallback, Temperatur- und Saisonanpassung
-    sowie optionalen Push-Benachrichtigungen.
+    Bewässerung für Tomaten im Gewächshaus: täglich morgens und abends zu festen Zeiten,
+    je 20 Minuten pro Lauf (anpassbar). Optional Feuchte-Prüfung, Hitze-/Sommer-Faktoren
+    und Push-Benachrichtigungen.
   domain: automation
+  author: 3ddruck12
+  source_url: https://github.com/3ddruck12/ha_gie-bot/blob/main/blueprintgiessbot4000.yaml
 
   input:
     zone_name:
       name: Zonenname
       selector:
         text: {}
-      default: Gewächshaus
+      default: Gewächshaus Tomaten
 
     enable_switch:
       name: Aktivierungsschalter
       selector:
         entity:
           domain: input_boolean
-
-    soil_moisture_sensor:
-      name: Bodenfeuchtesensor
-      selector:
-        entity:
-          domain: sensor
-
-    temperature_sensor:
-      name: Temperatursensor
-      selector:
-        entity:
-          domain: sensor
 
     watering_targets:
       name: Ventile / Pumpen
@@ -38,17 +28,60 @@ blueprint:
           entity:
             domain: switch
 
+    soil_moisture_sensor:
+      name: Bodenfeuchtesensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: moisture
+
+    temperature_sensor:
+      name: Temperatursensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
     morning_time:
-      name: Morgens
+      name: Morgens (Tomaten)
+      description: Empfohlen für Tomaten im Gewächshaus 05:00 Uhr.
       default: "05:00:00"
       selector:
         time: {}
 
     evening_time:
-      name: Abends
+      name: Abends (Tomaten)
+      description: Empfohlen für Tomaten im Gewächshaus 20:30 Uhr.
       default: "20:30:00"
       selector:
         time: {}
+
+    morning_duration:
+      name: Gießdauer morgens (Minuten)
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: min
+
+    evening_duration:
+      name: Gießdauer abends (Minuten)
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: min
+
+    water_only_if_dry:
+      name: Nur gießen wenn zu trocken
+      description: >
+        Wenn aktiv, wird nur bei Feuchte unter der Schwelle gegossen.
+        Wenn aus, gießt der Bot zu jeder festen Zeit die volle Dauer.
+      default: true
+      selector:
+        boolean: {}
 
     moisture_threshold:
       name: Feuchte-Schwelle (%)
@@ -59,14 +92,21 @@ blueprint:
           max: 100
           unit_of_measurement: "%"
 
-    base_duration:
-      name: Basisdauer (Minuten)
-      default: 20
+    sensor_fallback:
+      name: Sensor-Fallback aktivieren
+      description: Bei unbekanntem Feuchtesensor trotzdem gießen.
+      default: true
       selector:
-        number:
-          min: 1
-          max: 60
-          unit_of_measurement: min
+        boolean: {}
+
+    duration_adjustment_enabled:
+      name: Dauer bei Hitze/Sommer verlängern
+      description: >
+        Wenn aus, bleiben morgens/abends exakt die eingestellten Minuten (Standard für Tomaten).
+        Wenn an, verlängert sich die Dauer bei hoher Temperatur und im Sommer.
+      default: false
+      selector:
+        boolean: {}
 
     temp_threshold:
       name: Temperatur-Schwelle (°C)
@@ -87,7 +127,7 @@ blueprint:
           step: 0.1
 
     summer_multiplier:
-      name: Sommer-Faktor
+      name: Sommer-Faktor (Mai–Aug)
       default: 1.2
       selector:
         number:
@@ -95,15 +135,9 @@ blueprint:
           max: 2.0
           step: 0.1
 
-    sensor_fallback:
-      name: Sensor-Fallback aktivieren
-      default: true
-      selector:
-        boolean: {}
-
     notify_enabled:
       name: Benachrichtigungen aktivieren
-      default: true
+      default: false
       selector:
         boolean: {}
 
@@ -117,8 +151,10 @@ blueprint:
 trigger:
   - platform: time
     at: !input morning_time
+    id: morning
   - platform: time
     at: !input evening_time
+    id: evening
 
 condition:
   - condition: state
@@ -134,33 +170,41 @@ action:
       notify_enabled: !input notify_enabled
       notify_entity: !input notify_service
 
+      run_label: "{{ 'Morgens' if trigger.id == 'morning' else 'Abends' }}"
+      scheduled_minutes: "{{ morning_duration if trigger.id == 'morning' else evening_duration }}"
+      morning_duration: !input morning_duration
+      evening_duration: !input evening_duration
+
       soil_moisture: "{{ states(moisture_entity) | float(0) }}"
       temp: "{{ states(temp_entity) | float(0) }}"
-
       threshold: !input moisture_threshold
-      base: !input base_duration
+      fallback: !input sensor_fallback
+      check_moisture: !input water_only_if_dry
+      adjust_duration: !input duration_adjustment_enabled
 
       temp_limit: !input temp_threshold
       temp_factor: !input temp_multiplier
       summer_factor: !input summer_multiplier
 
-      fallback: !input sensor_fallback
-
-      temp_adjust: "{{ temp_factor if temp > temp_limit else 1 }}"
-      season_adjust: "{{ summer_factor if (now().month in [5, 6, 7, 8]) else 1 }}"
-      final_duration: "{{ (base * temp_adjust * season_adjust) | round(0) }}"
+      temp_adjust: "{{ temp_factor if (adjust_duration and temp > temp_limit) else 1 }}"
+      season_adjust: "{{ summer_factor if (adjust_duration and now().month in [5, 6, 7, 8]) else 1 }}"
+      final_duration: "{{ (scheduled_minutes | float(20) * temp_adjust * season_adjust) | round(0) }}"
       duration_seconds: "{{ (final_duration | int) * 60 }}"
 
-      start_message: "{{ 'Gießen gestartet: ' ~ (final_duration | int | string) ~ ' Min. Feuchte: ' ~ (soil_moisture | string) ~ '%, Temp: ' ~ (temp | string) ~ '°C.' }}"
-      end_message: "{{ 'Gießen beendet nach ' ~ (final_duration | int | string) ~ ' Min. Feuchte jetzt: ' ~ states(moisture_entity) ~ '%.' }}"
-      skip_message: "{{ 'Kein Gießen nötig. Feuchte: ' ~ (soil_moisture | string) ~ '% (Schwelle: ' ~ (threshold | string) ~ '%).' }}"
+      start_message: "{{ run_label ~ ': Gießen gestartet (' ~ (final_duration | int | string) ~ ' Min). Feuchte ' ~ (soil_moisture | string) ~ '%, Temp ' ~ (temp | string) ~ '°C.' }}"
+      end_message: "{{ run_label ~ ': Gießen beendet nach ' ~ (final_duration | int | string) ~ ' Min. Feuchte jetzt ' ~ states(moisture_entity) ~ '%.' }}"
+      skip_message: "{{ run_label ~ ': Kein Gießen nötig. Feuchte ' ~ (soil_moisture | string) ~ '% (Schwelle ' ~ (threshold | string) ~ '%).' }}"
 
   - choose:
       - conditions:
           - condition: template
             value_template: >
+              {% if not check_moisture %}
+              true
+              {% else %}
               {% set valid = states(moisture_entity) not in ['unknown', 'unavailable', 'none', ''] %}
               {{ (valid and soil_moisture < threshold) or (not valid and fallback) }}
+              {% endif %}
         sequence:
           - service: switch.turn_on
             target: "{{ watering_target_data }}"
