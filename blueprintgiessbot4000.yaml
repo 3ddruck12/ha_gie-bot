@@ -2,8 +2,8 @@ blueprint:
   name: GießBot 4000 – Tomaten Gewächshaus
   description: >
     Bewässerung für Tomaten im Gewächshaus: täglich morgens und abends zu festen Zeiten,
-    je 20 Minuten pro Lauf (anpassbar). Optional Feuchte-Prüfung, Hitze-/Sommer-Faktoren
-    und Push-Benachrichtigungen.
+    je 20 Minuten pro Lauf (anpassbar). Benachrichtigungen in Home Assistant,
+    optional Push ans Handy. Sensor-Fallback maximal 1× pro Tag.
   domain: automation
   author: 3ddruck12
   source_url: https://github.com/3ddruck12/ha_gie-bot/blob/main/blueprintgiessbot4000.yaml
@@ -102,10 +102,23 @@ blueprint:
 
     sensor_fallback:
       name: Sensor-Fallback aktivieren
-      description: Bei unbekanntem Feuchtesensor trotzdem gießen.
-      default: true
+      description: >
+        Wenn der Feuchtesensor ausfällt, darf der Bot höchstens 1× pro Tag
+        zu einer festen Zeit gießen (Tracker-Helfer erforderlich).
+      default: false
       selector:
         boolean: {}
+
+    fallback_tracker:
+      name: Fallback-Tracker (input_datetime)
+      description: >
+        Helfer anlegen unter Einstellungen → Helfer → Datum und Uhrzeit
+        (z. B. input_datetime.giessbot_fallback). Merkt sich den letzten Fallback-Lauf.
+      selector:
+        entity:
+          filter:
+            - domain: input_datetime
+          multiple: false
 
     duration_adjustment_enabled:
       name: Dauer bei Hitze/Sommer verlängern
@@ -143,14 +156,21 @@ blueprint:
           max: 2.0
           step: 0.1
 
-    notify_enabled:
-      name: Benachrichtigungen aktivieren
+    notify_ha_enabled:
+      name: Benachrichtigungen in Home Assistant
+      description: Zeigt Meldungen in der HA-Sidebar (Glocke links).
+      default: true
+      selector:
+        boolean: {}
+
+    notify_mobile_enabled:
+      name: Push ans Handy
       default: false
       selector:
         boolean: {}
 
     notify_service:
-      name: Benachrichtigungsdienst
+      name: Benachrichtigungsdienst (Handy)
       description: z. B. notify.mobile_app_mein_handy
       selector:
         entity:
@@ -177,7 +197,9 @@ action:
       moisture_entity: !input soil_moisture_sensor
       temp_entity: !input temperature_sensor
       watering_target_data: !input watering_targets
-      notify_enabled: !input notify_enabled
+      fallback_tracker_entity: !input fallback_tracker
+      notify_ha_enabled: !input notify_ha_enabled
+      notify_mobile_enabled: !input notify_mobile_enabled
       notify_entity: !input notify_service
 
       run_label: "{{ 'Morgens' if trigger.id == 'morning' else 'Abends' }}"
@@ -201,9 +223,15 @@ action:
       final_duration: "{{ (scheduled_minutes | float(20) * temp_adjust * season_adjust) | round(0) }}"
       duration_seconds: "{{ (final_duration | int) * 60 }}"
 
-      start_message: "{{ run_label ~ ': Gießen gestartet (' ~ (final_duration | int | string) ~ ' Min). Feuchte ' ~ (soil_moisture | string) ~ '%, Temp ' ~ (temp | string) ~ '°C.' }}"
+      notification_id_base: "giessbot_{{ zone | slugify }}"
+
+      start_message: "{{ run_label ~ ': Gießen gestartet (' ~ (final_duration | int | string) ~ ' Min). Feuchte ' ~ states(moisture_entity) ~ '%, Temp ' ~ (temp | string) ~ '°C.' }}"
+      start_fallback_message: "{{ run_label ~ ': Fallback-Gießen gestartet (' ~ (final_duration | int | string) ~ ' Min). Feuchtesensor ausgefallen.' }}"
       end_message: "{{ run_label ~ ': Gießen beendet nach ' ~ (final_duration | int | string) ~ ' Min. Feuchte jetzt ' ~ states(moisture_entity) ~ '%.' }}"
       skip_message: "{{ run_label ~ ': Kein Gießen nötig. Feuchte ' ~ (soil_moisture | string) ~ '% (Schwelle ' ~ (threshold | string) ~ '%).' }}"
+      skip_fallback_used_message: "{{ run_label ~ ': Sensor ausgefallen. Fallback heute bereits genutzt — kein Gießen.' }}"
+      skip_no_fallback_message: "{{ run_label ~ ': Sensor ausgefallen. Fallback deaktiviert — kein Gießen.' }}"
+      skip_no_tracker_message: "{{ run_label ~ ': Sensor ausgefallen. Fallback-Tracker fehlt — kein Gießen.' }}"
 
   - choose:
       - conditions:
@@ -213,23 +241,69 @@ action:
               true
               {% else %}
               {% set valid = states(moisture_entity) not in ['unknown', 'unavailable', 'none', ''] %}
-              {{ (valid and soil_moisture < threshold) or (not valid and fallback) }}
+              {% if valid and soil_moisture < threshold %}
+              true
+              {% elif not valid and fallback and fallback_tracker_entity not in ['', 'unknown', 'unavailable', 'none'] %}
+              {% set tracker = states(fallback_tracker_entity) %}
+              {% set today = now().strftime('%Y-%m-%d') %}
+              {% set last = tracker[:10] if tracker not in ['unknown', 'unavailable', 'none', ''] else '' %}
+              {{ last != today }}
+              {% else %}
+              false
+              {% endif %}
               {% endif %}
         sequence:
           - service: switch.turn_on
             target: "{{ watering_target_data }}"
 
-          - if:
-              - condition: template
-                value_template: "{{ notify_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
-            then:
-              - service: notify.notify
-                continue_on_error: true
-                target:
-                  entity_id: "{{ notify_entity }}"
-                data:
-                  title: "GießBot – {{ zone }}"
-                  message: "{{ start_message }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set valid = states(moisture_entity) not in ['unknown', 'unavailable', 'none', ''] %}
+                      {{ check_moisture and fallback and not valid }}
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_ha_enabled }}"
+                    then:
+                      - service: persistent_notification.create
+                        data:
+                          title: "GießBot – {{ zone }}"
+                          message: "{{ start_fallback_message }}"
+                          notification_id: "{{ notification_id_base }}_start"
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_mobile_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
+                    then:
+                      - service: notify.notify
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_entity }}"
+                        data:
+                          title: "GießBot – {{ zone }}"
+                          message: "{{ start_fallback_message }}"
+            default:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_ha_enabled }}"
+                then:
+                  - service: persistent_notification.create
+                    data:
+                      title: "GießBot – {{ zone }}"
+                      message: "{{ start_message }}"
+                      notification_id: "{{ notification_id_base }}_start"
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_mobile_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
+                then:
+                  - service: notify.notify
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_entity }}"
+                    data:
+                      title: "GießBot – {{ zone }}"
+                      message: "{{ start_message }}"
 
           - delay:
               seconds: "{{ duration_seconds }}"
@@ -239,7 +313,29 @@ action:
 
           - if:
               - condition: template
-                value_template: "{{ notify_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
+                value_template: >
+                  {% set valid = states(moisture_entity) not in ['unknown', 'unavailable', 'none', ''] %}
+                  {{ check_moisture and fallback and not valid and fallback_tracker_entity not in ['', 'unknown', 'unavailable', 'none'] }}
+            then:
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: "{{ fallback_tracker_entity }}"
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+          - if:
+              - condition: template
+                value_template: "{{ notify_ha_enabled }}"
+            then:
+              - service: persistent_notification.create
+                data:
+                  title: "GießBot – {{ zone }}"
+                  message: "{{ end_message }}"
+                  notification_id: "{{ notification_id_base }}_end"
+
+          - if:
+              - condition: template
+                value_template: "{{ notify_mobile_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
             then:
               - service: notify.notify
                 continue_on_error: true
@@ -250,9 +346,37 @@ action:
                   message: "{{ end_message }}"
 
     default:
+      - variables:
+          status_message: >
+            {% set valid = states(moisture_entity) not in ['unknown', 'unavailable', 'none', ''] %}
+            {% if not valid and check_moisture %}
+            {% if not fallback %}
+            {{ skip_no_fallback_message }}
+            {% elif fallback_tracker_entity in ['', 'unknown', 'unavailable', 'none'] %}
+            {{ skip_no_tracker_message }}
+            {% else %}
+            {% set tracker = states(fallback_tracker_entity) %}
+            {% set today = now().strftime('%Y-%m-%d') %}
+            {% set last = tracker[:10] if tracker not in ['unknown', 'unavailable', 'none', ''] else '' %}
+            {{ skip_fallback_used_message if last == today else skip_no_fallback_message }}
+            {% endif %}
+            {% else %}
+            {{ skip_message }}
+            {% endif %}
+
       - if:
           - condition: template
-            value_template: "{{ notify_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
+            value_template: "{{ notify_ha_enabled }}"
+        then:
+          - service: persistent_notification.create
+            data:
+              title: "GießBot – {{ zone }}"
+              message: "{{ status_message }}"
+              notification_id: "{{ notification_id_base }}_skip"
+
+      - if:
+          - condition: template
+            value_template: "{{ notify_mobile_enabled and notify_entity not in ['', 'unknown', 'unavailable', 'none'] }}"
         then:
           - service: notify.notify
             continue_on_error: true
@@ -260,6 +384,6 @@ action:
               entity_id: "{{ notify_entity }}"
             data:
               title: "GießBot – {{ zone }}"
-              message: "{{ skip_message }}"
+              message: "{{ status_message }}"
 
 mode: single
