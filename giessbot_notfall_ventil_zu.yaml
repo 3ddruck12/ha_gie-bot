@@ -1,0 +1,20 @@
+# Optionale Zusatz-Automation (manuell in HA importieren oder in automations.yaml einfügen).
+# Schließt das Ventil, wenn der GießBot-Aktivierungsschalter ausgeschaltet wird –
+# z. B. während ein Lauf noch in der delay-Phase ist.
+#
+# Entitäten anpassen:
+#   - input_boolean.giessbot_gewaechshaus  → dein Aktivierungsschalter aus dem Blueprint
+#   - valve.bewasserungscomputer           → dein Ventil / Schalter
+
+alias: GießBot Notfall – Ventil zu bei Deaktivierung
+description: Schließt das Ventil, wenn der GießBot-Aktivierungsschalter aus geht.
+mode: single
+trigger:
+  - platform: state
+    entity_id: input_boolean.giessbot_gewaechshaus
+    from: "on"
+    to: "off"
+action:
+  - service: homeassistant.turn_off
+    target:
+      entity_id: valve.bewasserungscomputer

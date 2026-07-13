@@ -33,6 +33,24 @@ blueprint:
                 - switch
                 - valve
 
+    water_shortage_protection_enabled:
+      name: Auto-Schließen bei Wassermangel
+      description: >
+        Aktiviert vor dem Gießen die Schutzfunktion am Bewässerungscomputer
+        (z. B. switch.bewasserungscomputer_auto_close_when_water_shortage).
+      default: true
+      selector:
+        boolean: {}
+
+    water_shortage_protection_switch:
+      name: Schalter Wassermangel-Schutz
+      description: z. B. switch.bewasserungscomputer_auto_close_when_water_shortage
+      selector:
+        entity:
+          filter:
+            - domain: switch
+          multiple: false
+
     soil_moisture_sensor:
       name: Bodenfeuchtesensor
       description: Der Sensor, der die aktuelle Bodenfeuchtigkeit für diese Zone misst (in %).
@@ -200,6 +218,8 @@ action:
       temp_entity: !input temperature_sensor
       watering_target_data: !input watering_targets
       fallback_tracker_entity: !input fallback_tracker
+      water_shortage_protection_enabled: !input water_shortage_protection_enabled
+      water_shortage_switch: !input water_shortage_protection_switch
       notify_ha_enabled: !input notify_ha_enabled
       notify_mobile_enabled: !input notify_mobile_enabled
       notify_entity: !input notify_service
@@ -254,6 +274,14 @@ action:
               {% endif %}
               {% endif %}
         sequence:
+          - if:
+              - condition: template
+                value_template: "{{ water_shortage_protection_enabled and water_shortage_switch not in ['', 'unknown', 'unavailable', 'none'] }}"
+            then:
+              - service: homeassistant.turn_on
+                target:
+                  entity_id: "{{ water_shortage_switch }}"
+
           - service: homeassistant.turn_off
             target: !input watering_targets
 
@@ -391,7 +419,3 @@ action:
               message: "{{ status_message }}"
 
 mode: single
-
-on_stop:
-  - service: homeassistant.turn_off
-    target: !input watering_targets
