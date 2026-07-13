@@ -203,9 +203,9 @@ action:
       notify_entity: !input notify_service
 
       run_label: "{{ 'Morgens' if trigger.id == 'morning' else 'Abends' }}"
-      scheduled_minutes: "{{ morning_duration if trigger.id == 'morning' else evening_duration }}"
       morning_duration: !input morning_duration
       evening_duration: !input evening_duration
+      scheduled_minutes: "{{ morning_duration if trigger.id == 'morning' else evening_duration }}"
 
       soil_moisture: "{{ states(moisture_entity) | float(0) }}"
       temp: "{{ states(temp_entity) | float(0) }}"
@@ -220,8 +220,7 @@ action:
 
       temp_adjust: "{{ temp_factor if (adjust_duration and temp > temp_limit) else 1 }}"
       season_adjust: "{{ summer_factor if (adjust_duration and now().month in [5, 6, 7, 8]) else 1 }}"
-      final_duration: "{{ (scheduled_minutes | float(20) * temp_adjust * season_adjust) | round(0) }}"
-      duration_seconds: "{{ (final_duration | int) * 60 }}"
+      final_duration: "{{ (scheduled_minutes | float(20) * temp_adjust * season_adjust) | round(0) | int }}"
 
       notification_id_base: "giessbot_{{ zone | slugify }}"
 
@@ -253,8 +252,11 @@ action:
               {% endif %}
               {% endif %}
         sequence:
+          - service: switch.turn_off
+            target: !input watering_targets
+
           - service: switch.turn_on
-            target: "{{ watering_target_data }}"
+            target: !input watering_targets
 
           - choose:
               - conditions:
@@ -306,10 +308,10 @@ action:
                       message: "{{ start_message }}"
 
           - delay:
-              seconds: "{{ duration_seconds }}"
+              minutes: "{{ final_duration }}"
 
           - service: switch.turn_off
-            target: "{{ watering_target_data }}"
+            target: !input watering_targets
 
           - if:
               - condition: template
@@ -387,3 +389,7 @@ action:
               message: "{{ status_message }}"
 
 mode: single
+
+on_stop:
+  - service: switch.turn_off
+    target: !input watering_targets
