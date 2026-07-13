@@ -25,11 +25,13 @@ blueprint:
 
     watering_targets:
       name: Ventile / Pumpen
+      description: Schalter (switch) oder Ventile (valve), z. B. valve.bewasserungscomputer
       selector:
         target:
           entity:
             - domain:
                 - switch
+                - valve
 
     soil_moisture_sensor:
       name: Bodenfeuchtesensor
@@ -252,10 +254,10 @@ action:
               {% endif %}
               {% endif %}
         sequence:
-          - service: switch.turn_off
+          - service: homeassistant.turn_off
             target: !input watering_targets
 
-          - service: switch.turn_on
+          - service: homeassistant.turn_on
             target: !input watering_targets
 
           - choose:
@@ -310,7 +312,7 @@ action:
           - delay:
               minutes: "{{ final_duration }}"
 
-          - service: switch.turn_off
+          - service: homeassistant.turn_off
             target: !input watering_targets
 
           - if:
@@ -391,5 +393,5 @@ action:
 mode: single
 
 on_stop:
-  - service: switch.turn_off
+  - service: homeassistant.turn_off
     target: !input watering_targets
